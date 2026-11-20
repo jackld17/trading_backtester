@@ -1,0 +1,178 @@
+{%- macro pct(x, d=1) -%}{% if x is none %}—{% else %}{{ ("%+." ~ d ~ "f")|format(x * 100) }}%{% endif %}{%- endmacro -%}
+{%- macro num(x, d=2) -%}{% if x is none %}—{% else %}{{ ("%." ~ d ~ "f")|format(x) }}{% endif %}{%- endmacro -%}
+{%- macro cls(x) -%}{% if x is not none %}{{ 'pos' if x >= 0 else 'neg' }}{% endif %}{%- endmacro -%}
+{%- set m = d.metrics -%}{%- set dg = d.diagnostics -%}{%- set rv = d.report -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ r.title }} — Backtest Report</title>
+<style>
+  :root { --bg:#0d1117; --surface:#161b22; --border:#30363d; --text:#e6edf3; --muted:#8b949e;
+          --pos:#3fb950; --neg:#f85149; --warn:#d29922; --accent:#58a6ff;
+          --mono:'SF Mono','Fira Code',ui-monospace,monospace; color-scheme: dark; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+         background:var(--bg); color:var(--text); padding:2.5rem 1.25rem 4rem; line-height:1.55; }
+  .page { max-width:900px; margin:0 auto; }
+  .top { display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; font-size:.8rem; }
+  .top a, .top button { color:var(--accent); background:none; border:1px solid var(--border); border-radius:6px;
+                        padding:.4rem .8rem; font:inherit; cursor:pointer; text-decoration:none; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:2rem 2.25rem; margin-bottom:1.5rem; }
+  h1 { font-size:1.5rem; letter-spacing:-.01em; margin-bottom:.35rem; }
+  .meta { color:var(--muted); font-size:.85rem; }
+  h2 { font-size:.9rem; color:var(--muted); font-weight:500; margin-bottom:1.1rem; }
+  h3 { font-size:.68rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:1.5rem 0 .6rem; }
+  p { font-size:.9rem; color:#c9d1d9; }
+  .idea { font-size:1rem; font-style:italic; color:var(--text); border-left:3px solid var(--accent); padding-left:.9rem; margin-top:1.2rem; }
+  .notes { white-space:pre-wrap; }
+  dl { display:grid; grid-template-columns:90px 1fr; gap:.45rem 1rem; font-size:.88rem; }
+  dt { color:var(--muted); font-size:.68rem; text-transform:uppercase; letter-spacing:.07em; padding-top:.15rem; }
+  ul.plain { padding-left:1.1rem; font-size:.85rem; color:var(--muted); }
+  .verdict { display:inline-block; padding:.22rem .7rem; border-radius:12px; font-size:.7rem; font-weight:700;
+             text-transform:uppercase; letter-spacing:.08em; margin-bottom:.8rem; background:rgba(210,153,34,.15); color:var(--warn); }
+  .v-promising { background:rgba(63,185,80,.15); color:var(--pos); }
+  .v-weak, .v-likely_overfit, .v-mostly_beta { background:rgba(248,81,73,.13); color:var(--neg); }
+  .headline { font-size:1.05rem; font-weight:500; color:var(--text); }
+  .flags { list-style:none; display:flex; flex-direction:column; gap:.4rem; }
+  .flags li { font-size:.82rem; padding:.5rem .8rem; border-left:3px solid var(--warn); background:rgba(210,153,34,.07); border-radius:0 4px 4px 0; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--border); border-radius:8px; overflow:hidden; }
+  .cell { background:var(--surface); padding:1rem 1.2rem; }
+  .cell .l { font-size:.63rem; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); }
+  .cell .v { font-family:var(--mono); font-size:1.25rem; font-weight:600; margin:.4rem 0 .3rem; }
+  .cell .s { font-family:var(--mono); font-size:.68rem; color:var(--muted); }
+  .pos { color:var(--pos); } .neg { color:var(--neg); }
+  img { width:100%; border-radius:6px; border:1px solid var(--border); margin-top:1.5rem; }
+  table { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:.76rem; }
+  th { text-align:left; color:var(--muted); font-size:.63rem; text-transform:uppercase; letter-spacing:.07em; padding:.4rem .5rem; border-bottom:1px solid var(--border); }
+  td { padding:.38rem .5rem; border-bottom:1px solid rgba(48,54,61,.6); }
+  .log { font-family:var(--mono); font-size:.72rem; color:var(--muted); white-space:pre; line-height:1.6; max-height:none; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:.6rem; margin-top:1.1rem; }
+  .tile { border:1px solid var(--border); border-radius:8px; padding:.8rem 1rem; }
+  .tile .l, .tile .s { font-size:.72rem; color:var(--muted); }
+  .tile .v { font-family:var(--mono); font-size:1.45rem; font-weight:600; margin:.3rem 0 .2rem; }
+  .tk { display:flex; gap:.6rem; font-size:.9rem; margin-bottom:.4rem; }
+  .tk-i { font-size:.7rem; padding-top:.25rem; } .muted { color:var(--muted); }
+  .checks { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:.45rem; }
+  .chk { font-size:.8rem; padding:.5rem .75rem; border-radius:6px; }
+  .chk.pass { background:rgba(63,185,80,.12); color:var(--pos); } .chk.warn { background:rgba(210,153,34,.13); color:var(--warn); }
+  .chk.fail { background:rgba(248,81,73,.12); color:var(--neg); }
+  .drawers { margin-top:1.75rem; border-top:1px solid var(--border); }
+  .drawers details { border-bottom:1px solid var(--border); }
+  .drawers summary { list-style:none; cursor:pointer; padding:.85rem 0; font-size:.85rem; color:var(--muted); display:flex; justify-content:space-between; }
+  .drawers summary::-webkit-details-marker { display:none; }
+  .drawers summary::after { content:"▾"; } .drawers details[open] summary::after { content:"▴"; }
+  .dbody { padding:.25rem 0 1.25rem; }
+  @media print { .drawers summary::after { content:""; } .drawers summary { color:#111; font-weight:600; } }
+  @media (max-width:640px) { .card { padding:1.3rem 1.1rem; } .grid { grid-template-columns:repeat(2,1fr); } }
+  @media print {
+    :root { --bg:#fff; --surface:#fff; --border:#d0d7de; --text:#111; --muted:#57606a; color-scheme: light; }
+    body { padding:0; } p, .flags li { color:#111; } .top { display:none; }
+    .card { break-inside:avoid; border:none; padding:1rem 0; } img { filter:none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top">
+    <a href="/">← Back to backtester</a>
+    <button onclick="window.print()">Print / Save as PDF</button>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem">
+      <div><h1>{{ r.title }}</h1>
+      <div class="meta">{{ d.ticker }} · {{ m.start_date }} → {{ m.end_date }} · saved {{ r.saved_at.replace('T', ' ') }}</div></div>
+      {% if rv and rv.verdict %}<span class="verdict v-{{ rv.verdict }}">{{ rv.verdict|replace('_', ' ') }}</span>{% endif %}
+    </div>
+    {% if rv and rv.headline %}<p class="headline" style="margin-top:1rem">{{ rv.headline }}</p>{% endif %}
+    <div class="tiles">
+      <div class="tile"><div class="l">Total return</div><div class="v {{ cls(m.total_return) }}">{{ pct(m.total_return, 0) }}</div><div class="s">vs {{ pct(m.bah_return, 0) }} holding</div></div>
+      <div class="tile"><div class="l">Sharpe</div><div class="v">{{ num(m.sharpe_ratio) }}</div><div class="s">vs {{ num(m.bah_sharpe) }} holding</div></div>
+      <div class="tile"><div class="l">Worst drawdown</div><div class="v neg">{{ pct(m.max_drawdown, 0)|replace('-', '−') }}</div><div class="s">vs {{ pct(m.bah_max_drawdown, 0)|replace('-', '−') }} holding</div></div>
+      <div class="tile"><div class="l">Trades</div><div class="v">{{ m.n_round_trips }}</div><div class="s">{{ "%.0f"|format(m.win_rate * 100) }}% winners · {{ "%.0f"|format(m.exposure * 100) }}% invested</div></div>
+    </div>
+    <img src="data:image/png;base64,{{ d.chart_b64 }}" alt="Backtest chart">
+    {% if rv and rv.takeaways %}
+    <h3>Key takeaways</h3>
+    {% for t in rv.takeaways %}<div class="tk"><span class="tk-i {{ {'up':'pos','down':'neg'}.get(t.tone, 'muted') }}">{{ {'up':'▲','down':'▼'}.get(t.tone, '●') }}</span><span>{{ t.text }}</span></div>{% endfor %}
+    {% endif %}
+    {% if dg.checks %}
+    <h3>Robustness checks</h3>
+    <div class="checks">{% for c in dg.checks %}<div class="chk {{ c.status }}"><b>{{ {'pass':'✓','warn':'!','fail':'✕'}[c.status] }}</b> {{ c.label }}</div>{% endfor %}</div>
+    {% endif %}
+    {% if r.idea or r.notes %}
+    <h3>Idea</h3>{% if r.idea %}<p class="idea">“{{ r.idea }}”</p>{% endif %}
+    {% if r.notes %}<p class="notes" style="margin-top:.6rem">{{ r.notes }}</p>{% endif %}
+    {% endif %}
+
+    <div class="drawers">
+      <details><summary>Rules and assumptions</summary><div class="dbody">
+        <dl>
+          <dt>Side</dt><dd>{{ d.rules.direction }}</dd>
+          <dt>Entry</dt><dd>{{ d.rules.entry }}</dd>
+          <dt>Exit</dt><dd>{{ d.rules.exit }}</dd>
+          {% if d.rules.risk %}<dt>Risk</dt><dd>{{ d.rules.risk|join('<br>'|safe) }}</dd>{% endif %}
+          <dt>Sizing</dt><dd>{{ d.rules.sizing }}</dd>
+        </dl>
+        {% if d.assumptions %}<h3>Assumptions</h3><ul class="plain">{% for a in d.assumptions %}<li>{{ a }}</li>{% endfor %}</ul>{% endif %}
+      </div></details>
+
+      {% if rv %}
+      <details><summary>Full analyst write-up</summary><div class="dbody">
+        {% for label, key in [('What drove returns','what_drove_returns'), ('Where it struggled','where_it_struggled'), ('Vs buy & hold','vs_buy_and_hold'), ('Robustness','robustness')] %}
+          {% if rv[key] %}<h3>{{ label }}</h3><p>{{ rv[key] }}</p>{% endif %}
+        {% endfor %}
+        {% set flags = (rv.red_flags or []) + (dg.red_flags or []) %}
+        {% if flags %}<h3>Red flags</h3><ul class="flags">{% for f in flags %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
+      </div></details>
+      {% endif %}
+
+      <details><summary>Robustness tables and yearly returns</summary><div class="dbody">
+        {% set sp = dg.split %}
+        <h3>Before vs after {{ sp.split_date }}</h3>
+        <table><tr><th></th><th>Return</th><th>CAGR</th><th>Sharpe</th><th>Max DD</th></tr>
+          {% for label, s in [('Before', sp.in_sample), ('After', sp.out_of_sample), ('Holding, after', sp.out_of_sample_buy_hold)] %}
+          <tr><td>{{ label }}</td><td class="{{ cls(s.total_return) }}">{{ pct(s.total_return) }}</td><td>{{ pct(s.cagr) }}</td><td>{{ num(s.sharpe) }}</td><td>{{ pct(s.max_drawdown) }}</td></tr>
+          {% endfor %}
+        </table>
+        <h3>Trading costs</h3>
+        <table><tr><th>Cost / side</th><th>Return</th><th>Sharpe</th></tr>
+          {% for c in dg.costs %}<tr><td>{{ "%g"|format(c.bps) }} bps</td><td class="{{ cls(c.total_return) }}">{{ pct(c.total_return) }}</td><td>{{ num(c.sharpe) }}</td></tr>{% endfor %}
+        </table>
+        {% if dg.sensitivity %}
+        <h3>Settings nudged ±25%</h3>
+        <table><tr><th>Setting</th><th>Base</th><th>Lower → Sharpe</th><th>Higher → Sharpe</th></tr>
+          {% for s in dg.sensitivity %}<tr><td>{{ s.param }}</td><td>{{ "%g"|format(s.base) }} → {{ num(m.sharpe_ratio) }}</td>
+            {% for v in s.variants %}<td>{{ "%g"|format(v.value) }} → {{ num(v.sharpe) }}</td>{% endfor %}
+            {% if s.variants|length < 2 %}<td>—</td>{% endif %}</tr>{% endfor %}
+        </table>
+        {% endif %}
+        <h3>Calendar-year returns</h3>
+        <table><tr><th>Year</th><th>Strategy</th><th>Holding</th></tr>
+          {% for y in m.yearly %}<tr><td>{{ y.year }}</td><td class="{{ cls(y.strategy) }}">{{ pct(y.strategy) }}</td><td class="{{ cls(y.buy_hold) }}">{{ pct(y.buy_hold) }}</td></tr>{% endfor %}
+        </table>
+      </div></details>
+
+      <details><summary>Trade log · {{ m.n_round_trips }} round trips</summary><div class="dbody">
+        <div class="log">{{ d.trade_log|join('\n') }}</div>
+        <h3>Exact spec</h3>
+        <div class="log">{{ d.spec|tojson(indent=2) }}</div>
+      </div></details>
+    </div>
+  </div>
+</div>
+<script>
+  // Printing / Save as PDF includes every section, then restores what was open.
+  var wasOpen = [];
+  window.addEventListener("beforeprint", function () {
+    wasOpen = [].map.call(document.querySelectorAll("details"), function (d) { return d.open; });
+    document.querySelectorAll("details").forEach(function (d) { d.open = true; });
+  });
+  window.addEventListener("afterprint", function () {
+    document.querySelectorAll("details").forEach(function (d, i) { d.open = wasOpen[i]; });
+  });
+</script>
+</body>
+</html>

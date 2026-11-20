@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Backtester</title>
+  <style>
+    /* ── Design tokens ─────────────────────────────────────────────────── */
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --border:   #30363d;
+      --text:     #e6edf3;
+      --muted:    #8b949e;
+      --positive: #3fb950;
+      --negative: #f85149;
+      --warning:  #d29922;
+      --accent:   #58a6ff;
+      --action:   #1f6feb;
+      --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+      color-scheme: dark;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 3rem 1.5rem 5rem;
+    }
+
+    .page { max-width: 900px; margin: 0 auto; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 2.25rem 2.5rem;
+      margin-bottom: 2rem;
+    }
+
+    h1 { font-size: 1.2rem; font-weight: 600; letter-spacing: -.01em; margin-bottom: 2rem; }
+    h2 { font-size: .875rem; font-weight: 500; color: var(--muted); margin-bottom: 1.5rem; letter-spacing: .01em; }
+    h3 { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08em;
+         color: var(--muted); margin: 1.75rem 0 .75rem; }
+
+    .error {
+      background: rgba(248,81,73,.1);
+      border: 1px solid rgba(248,81,73,.25);
+      padding: .8rem 1rem;
+      border-radius: 6px;
+      margin-bottom: 1.5rem;
+      font-size: .8rem;
+      color: var(--negative);
+    }
+    .notice {
+      background: rgba(88,166,255,.08);
+      border: 1px solid rgba(88,166,255,.25);
+      padding: .8rem 1rem;
+      border-radius: 6px;
+      margin-bottom: 1.5rem;
+      font-size: .85rem;
+      line-height: 1.55;
+    }
+
+    /* ── Mode toggle ───────────────────────────────────────────────────── */
+    .mode-toggle {
+      display: inline-flex; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 20px; padding: 3px; gap: 2px; margin-bottom: 2rem;
+    }
+    .mode-toggle button {
+      padding: .28rem .85rem; border: none; border-radius: 16px; background: transparent;
+      color: var(--muted); font-size: .775rem; font-weight: 500; cursor: pointer; font-family: inherit;
+      transition: background .15s, color .15s;
+    }
+    .mode-toggle button.active { background: var(--action); color: #fff; }
+    .mode-toggle button:hover:not(.active) { color: var(--text); }
+
+    /* ── Form ──────────────────────────────────────────────────────────── */
+    .fields-stack { display: flex; flex-direction: column; gap: 1.5rem; }
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.5rem; }
+    .field { display: flex; flex-direction: column; gap: .45rem; }
+
+    label {
+      font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+    }
+
+    input[type="text"], input[type="date"], input[type="number"], select, textarea {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: .6rem .75rem; color: var(--text); font-size: .875rem; font-family: inherit; width: 100%;
+      transition: border-color .15s, box-shadow .15s; -webkit-appearance: none;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(88,166,255,.12);
+    }
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238b949e'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right .75rem center; padding-right: 2rem; cursor: pointer;
+    }
+    select option { background: var(--surface); color: var(--text); }
+    textarea { resize: vertical; line-height: 1.6; min-height: 96px; }
+    textarea.code { font-family: var(--mono); font-size: .75rem; min-height: 260px; }
+
+    .btn-primary {
+      width: 100%; padding: .7rem; background: var(--action); border: none; border-radius: 6px; color: #fff;
+      font-size: .9rem; font-weight: 600; cursor: pointer; font-family: inherit; transition: background .15s;
+    }
+    .btn-primary:hover { background: #388bfd; }
+    .btn-primary:disabled { opacity: .55; cursor: wait; }
+    #run-btn { margin-top: 2rem; }
+
+    .btn-ghost {
+      padding: .45rem 1rem; background: transparent; border: 1px solid var(--border); border-radius: 6px;
+      color: var(--muted); font-size: .8rem; font-weight: 500; cursor: pointer; font-family: inherit;
+      transition: border-color .15s, color .15s;
+    }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+    .chips { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
+    .chip {
+      padding: .35rem .75rem; border: 1px solid var(--border); border-radius: 14px; background: var(--bg);
+      color: var(--muted); font-size: .75rem; cursor: pointer; font-family: inherit; text-align: left;
+    }
+    .chip:hover { border-color: var(--accent); color: var(--text); }
+    .chip.idea { border-color: rgba(88,166,255,.4); color: var(--accent); }
+
+    /* ── Metrics grid ──────────────────────────────────────────────────── */
+    .metrics-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border);
+      border-radius: 8px; overflow: hidden;
+    }
+    .metric-card { background: var(--surface); padding: 1.1rem 1.4rem; display: flex; flex-direction: column; gap: .55rem; }
+    .metric-label { font-size: .65rem; font-weight: 600; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); }
+    .metric-value { font-family: var(--mono); font-size: 1.3rem; font-weight: 600; line-height: 1; }
+    .metric-sub { font-size: .7rem; color: var(--muted); font-family: var(--mono); }
+    .positive { color: var(--positive); }
+    .negative { color: var(--negative); }
+
+    .chart-wrap { margin-top: 2rem; }
+    .chart-wrap img { width: 100%; display: block; border-radius: 6px; border: 1px solid var(--border); }
+
+    .trade-log { border: 1px solid var(--border); border-radius: 6px; max-height: 260px; overflow-y: auto; }
+    .trade-row { font-family: var(--mono); font-size: .75rem; padding: .35rem 1.1rem; color: var(--muted); white-space: pre; line-height: 1.6; }
+    .trade-row:nth-child(even) { background: rgba(255,255,255,.025); }
+
+    /* ── AI analyst ────────────────────────────────────────────────────── */
+    .rules { display: grid; grid-template-columns: 90px 1fr; gap: .55rem 1rem; font-size: .85rem; line-height: 1.5; }
+    .rules dt { color: var(--muted); font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; padding-top: .15rem; }
+    .assumptions { font-size: .8rem; color: var(--muted); line-height: 1.6; padding-left: 1.1rem; }
+    details summary { cursor: pointer; color: var(--muted); font-size: .8rem; margin-top: 1.5rem; }
+    details[open] summary { margin-bottom: .75rem; }
+
+    .verdict { display: inline-block; padding: .25rem .7rem; border-radius: 12px; font-size: .7rem;
+               font-weight: 700; text-transform: uppercase; letter-spacing: .08em; margin-bottom: .9rem; }
+    .v-promising { background: rgba(63,185,80,.15); color: var(--positive); }
+    .v-mixed { background: rgba(210,153,34,.15); color: var(--warning); }
+    .v-weak, .v-likely_overfit, .v-mostly_beta { background: rgba(248,81,73,.13); color: var(--negative); }
+    .v-insufficient_data { background: rgba(139,148,158,.15); color: var(--muted); }
+    .headline { font-size: 1.05rem; line-height: 1.5; font-weight: 500; margin-bottom: .5rem; }
+    .prose p { font-size: .875rem; line-height: 1.65; color: #c9d1d9; }
+    .flags { list-style: none; display: flex; flex-direction: column; gap: .45rem; }
+    .flags li { font-size: .8rem; line-height: 1.5; padding: .55rem .8rem; border-left: 3px solid var(--warning);
+                background: rgba(210,153,34,.07); border-radius: 0 4px 4px 0; }
+
+    table.t { width: 100%; border-collapse: collapse; font-size: .78rem; font-family: var(--mono); }
+    table.t th { text-align: left; color: var(--muted); font-weight: 600; font-size: .65rem; text-transform: uppercase;
+                 letter-spacing: .07em; padding: .4rem .5rem; border-bottom: 1px solid var(--border); }
+    table.t td { padding: .4rem .5rem; border-bottom: 1px solid rgba(48,54,61,.6); }
+
+    .refine { display: flex; gap: .6rem; margin-top: 1rem; }
+    .refine input { flex: 1; }
+    .refine button { width: auto; padding: .6rem 1.1rem; }
+    .spinner { font-size: .85rem; color: var(--muted); padding: 1rem 0; }
+
+    /* ── Saved reports ─────────────────────────────────────────────────── */
+    .save-bar { display: grid; grid-template-columns: 1fr auto; gap: .6rem; }
+    .save-bar textarea { min-height: 54px; grid-column: 1 / -1; }
+    .save-bar button { width: auto; padding: .6rem 1.2rem; }
+    .saved-ok { font-size: .82rem; color: var(--positive); margin-top: .7rem; }
+    .saved-ok a, .saved-row a { color: var(--accent); text-decoration: none; }
+    .saved-toggle { margin-top: 1rem; }
+    .saved-row { display: grid; grid-template-columns: 1fr auto; gap: .3rem 1rem; padding: .75rem 0;
+                 border-bottom: 1px solid var(--border); font-size: .82rem; align-items: center; }
+    .saved-row .t { font-weight: 500; }
+    .saved-row .sub { color: var(--muted); font-family: var(--mono); font-size: .72rem; }
+    .saved-row .acts { display: flex; gap: .8rem; font-size: .78rem; }
+    .saved-row .del { color: var(--muted); cursor: pointer; background: none; border: none; font: inherit; }
+    .saved-row .del:hover { color: var(--negative); }
+
+
+    /* ── Scorecard layout ──────────────────────────────────────────────── */
+    .sc-top { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: .5rem; }
+    .sc-meta { font-size: .8rem; color: var(--muted); }
+    .sc-top .verdict { margin-bottom: 0; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .6rem; margin-top: 1rem; }
+    .tile { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .85rem 1rem; }
+    .tl { font-size: .72rem; color: var(--muted); }
+    .tv { font-family: var(--mono); font-size: 1.55rem; font-weight: 600; margin: .3rem 0 .25rem; }
+    .ts { font-size: .72rem; color: var(--muted); }
+    .takeaways { display: flex; flex-direction: column; gap: .45rem; }
+    .tk { display: flex; gap: .6rem; font-size: .9rem; line-height: 1.45; }
+    .tk-i { font-size: .7rem; padding-top: .25rem; width: .8rem; flex: none; }
+    .muted { color: var(--muted); }
+    .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .45rem; }
+    .chk { font-size: .8rem; padding: .5rem .75rem; border-radius: 6px; }
+    .chk.pass { background: rgba(63,185,80,.12); color: var(--positive); }
+    .chk.warn { background: rgba(210,153,34,.13); color: var(--warning); }
+    .chk.fail { background: rgba(248,81,73,.12); color: var(--negative); }
+    .drawers { margin-top: 1.75rem; border-top: 1px solid var(--border); }
+    .drawers details { border-bottom: 1px solid var(--border); }
+    .drawers summary { list-style: none; cursor: pointer; padding: .85rem 0; margin: 0; font-size: .85rem; color: var(--muted);
+                       display: flex; justify-content: space-between; }
+    .drawers summary::-webkit-details-marker { display: none; }
+    .drawers summary::after { content: "▾"; transition: transform .15s; }
+    .drawers details[open] summary::after { transform: rotate(180deg); }
+    .drawers summary:hover { color: var(--text); }
+    .dbody { padding: .25rem 0 1.25rem; }
+    .prose-p { font-size: .85rem; color: #c9d1d9; margin-bottom: 1rem; }
+
+    @media (max-width: 640px) {
+      body { padding: 1rem .75rem 3rem; }
+      .card { padding: 1.4rem 1.2rem; }
+      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+      .row-3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+<div class="card">
+  <h1>Stock Backtester</h1>
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="mode-toggle">
+    <button type="button" id="btn-ai" onclick="setMode('ai')">AI Analyst</button>
+    <button type="button" id="btn-manual" onclick="setMode('manual')">Manual</button>
+  </div>
+
+  <!-- ── AI Analyst panel ─────────────────────────────────────────────── -->
+  <div id="ai-panel">
+    <div class="fields-stack">
+      <div class="field">
+        <label for="idea">Describe any strategy idea</label>
+        <textarea id="idea" placeholder="e.g. Buy when price breaks above its 20-day high on above-average volume, trail a 2x ATR stop"></textarea>
+        <div class="chips" id="examples"></div>
+      </div>
+      <div class="row-3">
+        <div class="field">
+          <label for="ai-ticker">Ticker</label>
+          <input type="text" id="ai-ticker" value="{{ form.ticker }}">
+        </div>
+        <div class="field">
+          <label for="ai-start">Start</label>
+          <input type="date" id="ai-start" value="{{ form.start_date }}">
+        </div>
+        <div class="field">
+          <label for="ai-end">End</label>
+          <input type="date" id="ai-end" value="{{ form.end_date }}">
+        </div>
+      </div>
+    </div>
+    <button type="button" class="btn-primary" id="analyze-btn" style="margin-top:1.75rem" onclick="analyze()">Analyze strategy</button>
+    <div id="ai-status"></div>
+    <button type="button" class="btn-ghost saved-toggle" onclick="toggleSaved()" id="saved-btn">Saved reports</button>
+    <div id="saved-list" style="display:none;margin-top:.5rem"></div>
+  </div>
+
+  <!-- ── Manual panel (original MA / RSI form) ────────────────────────── -->
+  <form method="POST" action="/" id="manual-panel" style="display:none;">
+    <div class="fields-stack">
+      <div class="field">
+        <label for="ticker">Ticker symbol</label>
+        <input type="text" id="ticker" name="ticker" value="{{ form.ticker }}" placeholder="e.g. SPY, AAPL" required>
+      </div>
+      <div class="field">
+        <label for="strategy">Strategy</label>
+        <select id="strategy" name="strategy" onchange="updateParams()">
+          <option value="MA Crossover" {% if form.strategy == "MA Crossover" %}selected{% endif %}>MA Crossover</option>
+          <option value="RSI" {% if form.strategy == "RSI" %}selected{% endif %}>RSI</option>
+        </select>
+      </div>
+      <div id="ma-params" class="field">
+        <label for="ma_window">MA window (days)</label>
+        <input type="number" id="ma_window" name="ma_window" value="{{ form.ma_window }}" min="2" max="500">
+      </div>
+      <div id="rsi-params">
+        <div class="row-3">
+          <div class="field">
+            <label for="rsi_window">RSI window (days)</label>
+            <input type="number" id="rsi_window" name="rsi_window" value="{{ form.rsi_window }}" min="2" max="200">
+          </div>
+          <div class="field">
+            <label for="oversold">Oversold</label>
+            <input type="number" id="oversold" name="oversold" value="{{ form.oversold }}" min="1" max="49">
+          </div>
+          <div class="field">
+            <label for="overbought">Overbought</label>
+            <input type="number" id="overbought" name="overbought" value="{{ form.overbought }}" min="51" max="99">
+          </div>
+        </div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label for="start_date">Start date</label>
+          <input type="date" id="start_date" name="start_date" value="{{ form.start_date }}" required>
+        </div>
+        <div class="field">
+          <label for="end_date">End date</label>
+          <input type="date" id="end_date" name="end_date" value="{{ form.end_date }}" required>
+        </div>
+      </div>
+    </div>
+    <button type="submit" id="run-btn" class="btn-primary">Run Backtest</button>
+  </form>
+</div>
+
+<!-- ── AI results (rendered by JS) ──────────────────────────────────────── -->
+<div id="ai-results"></div>
+
+{% if metrics %}
+<div class="card" id="manual-results">
+  <h2>{{ form.ticker }} &nbsp;·&nbsp; {{ strategy_label }} &nbsp;·&nbsp; {{ metrics.start_date }} → {{ metrics.end_date }}</h2>
+  <div class="metrics-grid">
+    <div class="metric-card"><span class="metric-label">Final Value</span><span class="metric-value">${{ "%.2f"|format(metrics.final_value) }}</span></div>
+    <div class="metric-card"><span class="metric-label">Total Return</span><span class="metric-value {{ 'positive' if metrics.total_return >= 0 else 'negative' }}">{{ "%+.2f"|format(metrics.total_return * 100) }}%</span></div>
+    <div class="metric-card"><span class="metric-label">Annualized Return</span><span class="metric-value {{ 'positive' if metrics.annualized_return >= 0 else 'negative' }}">{{ "%+.2f"|format(metrics.annualized_return * 100) }}%</span></div>
+    <div class="metric-card"><span class="metric-label">Sharpe Ratio</span><span class="metric-value">{{ "%.2f"|format(metrics.sharpe_ratio) }}</span></div>
+    <div class="metric-card"><span class="metric-label">Max Drawdown</span><span class="metric-value negative">{{ "%.2f"|format(metrics.max_drawdown * 100) }}%</span></div>
+    <div class="metric-card"><span class="metric-label">Win Rate</span><span class="metric-value">{{ "%.1f"|format(metrics.win_rate * 100) }}%</span></div>
+    <div class="metric-card"><span class="metric-label">vs Buy &amp; Hold</span><span class="metric-value {{ 'positive' if metrics.outperformance >= 0 else 'negative' }}">{{ "%+.2f"|format(metrics.outperformance * 100) }}%</span></div>
+    <div class="metric-card"><span class="metric-label">Buy &amp; Hold</span><span class="metric-value {{ 'positive' if metrics.bah_return >= 0 else 'negative' }}">{{ "%+.2f"|format(metrics.bah_return * 100) }}%</span></div>
+    <div class="metric-card"><span class="metric-label">Round Trips</span><span class="metric-value">{{ metrics.n_round_trips }}</span></div>
+  </div>
+  <div class="chart-wrap"><img src="data:image/png;base64,{{ chart_b64 }}" alt="Backtest chart"></div>
+</div>
+
+<div class="card">
+  <h2>Trade Log &nbsp;<span style="font-weight:400;">{{ metrics.n_trades }} executions · {{ metrics.n_wins }}/{{ metrics.n_round_trips }} winning trips</span></h2>
+  <div class="trade-log">{% for entry in trade_log %}<div class="trade-row">{{ entry }}</div>{% endfor %}</div>
+</div>
+{% endif %}
+
+</div><!-- /.page -->
+
+<script>
+  var START_MODE = {{ 'true' if metrics or error else 'false' }} ? "manual" : "ai";
+  var EXAMPLES = [
+    "Buy when RSI(2) drops below 10 and price is above the 200-day SMA; sell when RSI(2) goes above 70",
+    "Breakout: buy a close above the prior 55-day high, exit on a close below the prior 20-day low",
+    "Short when price closes 2 standard deviations above its 20-day mean, cover at the mean, 5% stop",
+    "MACD histogram turns positive while the 50-day is above the 200-day, 3x ATR trailing stop"
+  ];
+
+  var state = { spec: null, idea: "", changes: [], runs: [], last: null };
+
+  // ── helpers ─────────────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+    });
+  }
+  function pct(x, d) { return x == null ? "—" : (x >= 0 ? "+" : "") + (x * 100).toFixed(d == null ? 1 : d) + "%"; }
+  function num(x, d) { return x == null ? "—" : Number(x).toFixed(d == null ? 2 : d); }
+  function cls(x) { return x == null ? "" : (x >= 0 ? "positive" : "negative"); }
+
+  // ── mode toggle ─────────────────────────────────────────────────────────
+  function setMode(mode) {
+    var ai = mode === "ai";
+    document.getElementById("ai-panel").style.display = ai ? "" : "none";
+    document.getElementById("manual-panel").style.display = ai ? "none" : "";
+    document.getElementById("ai-results").style.display = ai ? "" : "none";
+    document.getElementById("btn-ai").classList.toggle("active", ai);
+    document.getElementById("btn-manual").classList.toggle("active", !ai);
+    var mr = document.getElementById("manual-results");
+    if (mr) { mr.style.display = ai ? "none" : ""; if (mr.nextElementSibling) mr.nextElementSibling.style.display = ai ? "none" : ""; }
+  }
+
+  function updateParams() {
+    var s = document.getElementById("strategy").value;
+    document.getElementById("ma-params").style.display  = s === "MA Crossover" ? "" : "none";
+    document.getElementById("rsi-params").style.display = s === "RSI" ? "" : "none";
+  }
+
+  // ── API ─────────────────────────────────────────────────────────────────
+  function analyze(opts) {
+    opts = opts || {};
+    var text = opts.text != null ? opts.text : document.getElementById("idea").value.trim();
+    if (!text && !opts.spec) { status("Describe a strategy first.", true); return; }
+    var body = {
+      text: text,
+      ticker: document.getElementById("ai-ticker").value,
+      start_date: document.getElementById("ai-start").value,
+      end_date: document.getElementById("ai-end").value
+    };
+    if (opts.refine && state.spec) body.current_spec = state.spec;
+    if (opts.spec) body.spec = opts.spec;
+    if (!opts.refine && !opts.spec) { state.idea = text; state.changes = []; }
+
+    busy(true, opts.refine ? "Applying change, re-running, re-reviewing…" : "Interpreting idea, backtesting, stress-testing, writing review…");
+    fetch("/analyze", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        busy(false);
+        if (d.status === "needs_clarification") {
+          status("<b>Quick question:</b> " + esc(d.clarifying_question) +
+                 "<br><span style='color:var(--muted);font-size:.8rem'>Add the answer to your description and analyze again.</span>");
+        } else if (d.status === "unsupported") {
+          status("<b>Can't test that one as described.</b> " + esc(d.unsupported_reason || d.interpretation));
+        } else if (d.status !== "ok") {
+          status(esc(d.error || "Something went wrong."), true);
+        } else {
+          status("");
+          state.spec = d.spec;
+          if (opts.refine) state.changes.push(text);
+          if (opts.spec) state.changes.push("manually edited spec");
+          document.getElementById("ai-ticker").value = d.ticker;
+          document.getElementById("ai-start").value = d.start_date;
+          document.getElementById("ai-end").value = d.end_date;
+          state.runs.push({ name: d.spec.name, change: opts.refine ? text : (opts.spec ? "edited spec" : "original idea"),
+                            ticker: d.ticker, m: d.metrics, oos: d.diagnostics.split.out_of_sample.sharpe });
+          render(d);
+        }
+      })
+      .catch(function (e) { busy(false); status("Request failed: " + esc(e.message), true); });
+  }
+
+  function busy(on, msg) {
+    var b = document.getElementById("analyze-btn");
+    b.disabled = on; b.textContent = on ? "Working…" : "Analyze strategy";
+    document.querySelectorAll(".refine button, .chip.idea").forEach(function (x) { x.disabled = on; });
+    if (on) status("<div class='spinner'>" + esc(msg) + "</div>");
+  }
+  function status(html, isErr) {
+    document.getElementById("ai-status").innerHTML =
+      html ? "<div class='" + (isErr ? "error" : "notice") + "' style='margin:1.25rem 0 0'>" + html + "</div>" : "";
+  }
+
+  // ── rendering ───────────────────────────────────────────────────────────
+  function render(d, opts) {
+    var m = d.metrics, dg = d.diagnostics, r = d.report || {}, h = "";
+    state.last = d;
+
+    if (opts && opts.saved) {
+      h += "<div class='notice'>Viewing saved report <b>" + esc(opts.saved.title) + "</b> from " +
+           esc(opts.saved.saved_at.replace("T", " ")) + " · <a style='color:var(--accent)' target='_blank' href='/reports/" +
+           encodeURIComponent(opts.saved.id) + "/view'>Printable version</a>" +
+           (opts.saved.notes ? "<br><span style='color:var(--muted)'>" + esc(opts.saved.notes) + "</span>" : "") + "</div>";
+    }
+
+    // ── Scorecard ──
+    h += "<div class='card'>";
+    h += "<div class='sc-top'><span class='sc-meta'>" + esc(d.ticker) + " · " + esc(m.start_date.slice(0, 4)) + "–" +
+         esc(m.end_date.slice(0, 4)) + " · " + esc(d.spec.name) + "</span>" +
+         (r.verdict ? "<span class='verdict v-" + esc(r.verdict) + "'>" + esc(r.verdict.replace(/_/g, " ")) + "</span>" : "") + "</div>";
+    if (r.headline) h += "<p class='headline'>" + esc(r.headline) + "</p>";
+    else if (d.report_error) h += "<div class='error'>Review unavailable: " + esc(d.report_error) + ". The numbers are still valid.</div>";
+
+    var tiles = [
+      ["Total return", pct(m.total_return, 0), cls(m.total_return), "vs " + pct(m.bah_return, 0) + " holding"],
+      ["Sharpe", num(m.sharpe_ratio), "", "vs " + num(m.bah_sharpe) + " holding"],
+      ["Worst drawdown", pct(m.max_drawdown, 0).replace("-", "−"), "negative", "vs " + pct(m.bah_max_drawdown, 0).replace("-", "−") + " holding"],
+      ["Trades", m.n_round_trips, "", Math.round(m.win_rate * 100) + "% winners · " + Math.round(m.exposure * 100) + "% invested"]
+    ];
+    h += "<div class='tiles'>" + tiles.map(function (t) {
+      return "<div class='tile'><div class='tl'>" + t[0] + "</div><div class='tv " + t[2] + "'>" + esc(t[1]) +
+             "</div><div class='ts'>" + esc(t[3]) + "</div></div>";
+    }).join("") + "</div>";
+    h += "<div class='chart-wrap' style='margin-top:1.25rem'><img src='data:image/png;base64," + d.chart_b64 + "' alt='Backtest chart'></div>";
+
+    if (r.takeaways && r.takeaways.length) {
+      var icon = { up: ["ti-arrow-up-right", "positive", "▲"], down: ["", "negative", "▼"], neutral: ["", "muted", "●"] };
+      h += "<h3>Key takeaways</h3><div class='takeaways'>" + r.takeaways.map(function (t) {
+        var ic = icon[t.tone] || icon.neutral;
+        return "<div class='tk'><span class='tk-i " + ic[1] + "'>" + ic[2] + "</span><span>" + esc(t.text) + "</span></div>";
+      }).join("") + "</div>";
+    }
+
+    if (dg.checks && dg.checks.length) {
+      var mark = { pass: "✓", warn: "!", fail: "✕" };
+      h += "<h3>Robustness checks</h3><div class='checks'>" + dg.checks.map(function (c) {
+        return "<div class='chk " + esc(c.status) + "'><b>" + mark[c.status] + "</b> " + esc(c.label) + "</div>";
+      }).join("") + "</div>";
+    }
+
+    h += "<h3>Refine this strategy</h3><div class='refine'><input type='text' id='refine-text' " +
+         "placeholder='Add a 200-day trend filter, or tighten the stop to 3%' " +
+         "onkeydown='if(event.key===\"Enter\")refine()'><button class='btn-primary' onclick='refine()'>Re-run</button></div>";
+
+    // ── Collapsed details ──
+    h += "<div class='drawers'>";
+
+    h += "<details><summary>Rules and assumptions</summary><div class='dbody'>";
+    if (d.interpretation) h += "<p class='prose-p'>" + esc(d.interpretation) + "</p>";
+    h += "<dl class='rules'><dt>Side</dt><dd>" + esc(d.rules.direction) + "</dd><dt>Entry</dt><dd>" + esc(d.rules.entry) +
+         "</dd><dt>Exit</dt><dd>" + esc(d.rules.exit) + "</dd>" +
+         (d.rules.risk.length ? "<dt>Risk</dt><dd>" + d.rules.risk.map(esc).join("<br>") + "</dd>" : "") +
+         "<dt>Sizing</dt><dd>" + esc(d.rules.sizing) + "</dd></dl>";
+    if (d.assumptions && d.assumptions.length) {
+      h += "<h3>Assumptions the AI made</h3><ul class='assumptions'>" +
+           d.assumptions.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul>";
+    }
+    h += "<h3>Exact spec (editable)</h3><textarea class='code' id='spec-edit'>" + esc(JSON.stringify(d.spec, null, 2)) + "</textarea>" +
+         "<div style='margin-top:.6rem'><button class='btn-ghost' onclick='runEdited()'>Run edited spec</button></div></div></details>";
+
+    h += "<details><summary>Full analyst write-up</summary><div class='dbody prose'>";
+    [["What drove returns", r.what_drove_returns], ["Where it struggled", r.where_it_struggled],
+     ["Vs buy &amp; hold", r.vs_buy_and_hold], ["Robustness", r.robustness]].forEach(function (s, i) {
+      if (s[1]) h += "<h3" + (i ? "" : " style='margin-top:0'") + ">" + s[0] + "</h3><p>" + esc(s[1]) + "</p>";
+    });
+    var flags = (r.red_flags || []).concat(dg.red_flags || []);
+    if (flags.length) h += "<h3>Red flags</h3><ul class='flags'>" + flags.map(function (f) { return "<li>" + esc(f) + "</li>"; }).join("") + "</ul>";
+    h += "</div></details>";
+
+    var sp = dg.split;
+    h += "<details><summary>Robustness tables and yearly returns</summary><div class='dbody'>";
+    h += "<h3 style='margin-top:0'>Before vs after " + esc(sp.split_date) + "</h3><table class='t'><tr><th></th><th>Return</th><th>CAGR</th><th>Sharpe</th><th>Max DD</th></tr>" +
+         [["Before", sp.in_sample], ["After", sp.out_of_sample], ["Holding, after", sp.out_of_sample_buy_hold]].map(function (row) {
+           var s = row[1];
+           return "<tr><td>" + row[0] + "</td><td class='" + cls(s.total_return) + "'>" + pct(s.total_return) + "</td><td>" + pct(s.cagr) +
+                  "</td><td>" + num(s.sharpe) + "</td><td>" + pct(s.max_drawdown) + "</td></tr>";
+         }).join("") + "</table>";
+    h += "<h3>Trading costs</h3><table class='t'><tr><th>Cost / side</th><th>Return</th><th>Sharpe</th></tr>" +
+         dg.costs.map(function (c) { return "<tr><td>" + c.bps + " bps</td><td class='" + cls(c.total_return) + "'>" + pct(c.total_return) + "</td><td>" + num(c.sharpe) + "</td></tr>"; }).join("") + "</table>";
+    if (dg.sensitivity.length) {
+      h += "<h3>Settings nudged ±25%</h3><table class='t'><tr><th>Setting</th><th>Base</th><th>Lower → Sharpe</th><th>Higher → Sharpe</th></tr>" +
+           dg.sensitivity.map(function (s) {
+             function cell(x) { return x ? num(x.value, x.value % 1 ? 2 : 0) + " → " + num(x.sharpe) : "—"; }
+             return "<tr><td>" + esc(s.param) + "</td><td>" + num(s.base, s.base % 1 ? 2 : 0) + " → " + num(m.sharpe_ratio) + "</td><td>" + cell(s.variants[0]) + "</td><td>" + cell(s.variants[1]) + "</td></tr>";
+           }).join("") + "</table>";
+    }
+    h += "<h3>Calendar-year returns</h3><table class='t'><tr><th>Year</th><th>Strategy</th><th>Holding</th></tr>" +
+         m.yearly.map(function (y) { return "<tr><td>" + y.year + "</td><td class='" + cls(y.strategy) + "'>" + pct(y.strategy) + "</td><td class='" + cls(y.buy_hold) + "'>" + pct(y.buy_hold) + "</td></tr>"; }).join("") + "</table>";
+    h += "<h3>More stats</h3><table class='t'>" + [
+      ["CAGR", pct(m.annualized_return) + " (holding " + pct(m.bah_cagr) + ")"], ["Sortino", num(m.sortino)],
+      ["Volatility", pct(m.volatility).replace("+", "")], ["Longest drawdown", m.max_drawdown_days + " days"],
+      ["Avg win / loss", pct(m.avg_win) + " / " + pct(m.avg_loss)], ["Profit factor", num(m.profit_factor)],
+      ["Avg hold", num(m.avg_bars_held, 0) + " days"], ["Beta to stock", num(m.beta_to_underlying)]
+    ].map(function (x) { return "<tr><td>" + x[0] + "</td><td>" + esc(x[1]) + "</td></tr>"; }).join("") + "</table>";
+    h += "</div></details>";
+
+    h += "<details><summary>Trade log · " + m.n_round_trips + " round trips</summary><div class='dbody'><div class='trade-log'>" +
+         d.trade_log.map(function (t) { return "<div class='trade-row'>" + esc(t) + "</div>"; }).join("") + "</div></div></details>";
+    h += "</div></div>";
+
+    // ── Iterations ──
+    if (state.runs.length > 1) {
+      h += "<div class='card'><h2>Iterations this session</h2><table class='t'><tr><th>#</th><th>Change</th><th>Return</th><th>Sharpe</th><th>After-split Sharpe</th><th>Max DD</th><th>Trades</th></tr>" +
+           state.runs.map(function (x, i) {
+             return "<tr><td>" + (i + 1) + "</td><td style='font-family:inherit'>" + esc(x.change) + " (" + esc(x.ticker) + ")</td><td class='" + cls(x.m.total_return) + "'>" + pct(x.m.total_return) +
+                    "</td><td>" + num(x.m.sharpe_ratio) + "</td><td>" + num(x.oos) + "</td><td>" + pct(x.m.max_drawdown) + "</td><td>" + x.m.n_round_trips + "</td></tr>";
+           }).join("") + "</table></div>";
+    }
+
+    // ── Save ──
+    if (!(opts && opts.saved)) {
+      h += "<div class='card'><h2 style='margin-bottom:1rem'>Save this test</h2><div class='save-bar'>" +
+           "<input type='text' id='save-title' value='" + esc(d.spec.name + " · " + d.ticker) + "'>" +
+           "<button class='btn-primary' id='save-btn' onclick='saveReport()'>Save report</button>" +
+           "<textarea id='save-notes' placeholder='Notes (optional): what you were testing, what you think'></textarea>" +
+           "</div><div id='save-msg'></div></div>";
+    }
+
+    document.getElementById("ai-results").innerHTML = h;
+    document.getElementById("ai-results").scrollIntoView({ behavior: "smooth" });
+  }
+
+  function refine() {
+    var t = document.getElementById("refine-text").value.trim();
+    if (t) analyze({ text: t, refine: true });
+  }
+  function runEdited() {
+    try { analyze({ spec: JSON.parse(document.getElementById("spec-edit").value), text: "" }); }
+    catch (e) { status("That spec isn't valid JSON: " + esc(e.message), true); }
+  }
+
+  // ── saved reports ───────────────────────────────────────────────────
+  function fullIdea() {
+    return state.idea + (state.changes.length ? "  → then: " + state.changes.join("; ") : "");
+  }
+  function saveReport() {
+    if (!state.last) return;
+    var btn = document.getElementById("save-btn"); btn.disabled = true; btn.textContent = "Saving…";
+    fetch("/reports", { method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ result: state.last, idea: fullIdea(),
+                             title: document.getElementById("save-title").value,
+                             notes: document.getElementById("save-notes").value }) })
+      .then(function (r) { return r.json(); })
+      .then(function (x) {
+        btn.disabled = false; btn.textContent = "Save report";
+        var msg = document.getElementById("save-msg");
+        if (x.error) { msg.innerHTML = "<div class='error' style='margin:.7rem 0 0'>" + esc(x.error) + "</div>"; return; }
+        btn.textContent = "Saved ✓";
+        msg.innerHTML = "<div class='saved-ok'>Saved as “" + esc(x.title) + "” · <a target='_blank' href='/reports/" +
+                        encodeURIComponent(x.id) + "/view'>Open printable report</a></div>";
+        if (document.getElementById("saved-list").style.display !== "none") loadSaved();
+      })
+      .catch(function (e) { btn.disabled = false; btn.textContent = "Save report"; alert("Save failed: " + e.message); });
+  }
+  function toggleSaved() {
+    var el = document.getElementById("saved-list"), open = el.style.display === "none";
+    el.style.display = open ? "" : "none";
+    document.getElementById("saved-btn").textContent = open ? "Hide saved reports" : "Saved reports";
+    if (open) loadSaved();
+  }
+  function loadSaved() {
+    var el = document.getElementById("saved-list");
+    el.innerHTML = "<div class='spinner'>Loading…</div>";
+    fetch("/reports").then(function (r) { return r.json(); }).then(function (list) {
+      if (!list.length) { el.innerHTML = "<p style='color:var(--muted);font-size:.82rem;padding:.75rem 0'>No saved reports yet. Run an analysis and hit “Save report”.</p>"; return; }
+      el.innerHTML = list.map(function (x) {
+        return "<div class='saved-row'><div><div class='t'>" + esc(x.title) + "</div><div class='sub'>" +
+               esc((x.saved_at || "").replace("T", " ").slice(0, 16)) + " · " + esc(x.ticker) +
+               " · <span class='" + cls(x.total_return) + "'>" + pct(x.total_return) + "</span> · Sharpe " + num(x.sharpe) +
+               (x.verdict ? " · " + esc(x.verdict.replace(/_/g, " ")) : "") + "</div></div>" +
+               "<div class='acts'><a href='#' onclick='openSaved(\"" + esc(x.id) + "\");return false'>Open</a>" +
+               "<a target='_blank' href='/reports/" + encodeURIComponent(x.id) + "/view'>Printable</a>" +
+               "<button class='del' onclick='deleteSaved(\"" + esc(x.id) + "\", this)'>Delete</button></div></div>";
+      }).join("");
+    });
+  }
+  function openSaved(id) {
+    fetch("/reports/" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (rec) {
+      var d = rec.result;
+      state.spec = d.spec; state.idea = rec.idea || ""; state.changes = [];
+      state.runs = [{ name: d.spec.name, change: "saved: " + rec.title, ticker: d.ticker, m: d.metrics,
+                      oos: d.diagnostics.split.out_of_sample.sharpe }];
+      document.getElementById("idea").value = rec.idea || "";
+      document.getElementById("ai-ticker").value = d.ticker;
+      document.getElementById("ai-start").value = d.start_date;
+      document.getElementById("ai-end").value = d.end_date;
+      status("");
+      render(d, { saved: rec });
+    });
+  }
+  function deleteSaved(id, btn) {
+    if (!confirm("Delete this saved report? This can't be undone.")) return;
+    fetch("/reports/" + encodeURIComponent(id), { method: "DELETE" }).then(function () { loadSaved(); });
+  }
+
+  // ── init ────────────────────────────────────────────────────────────────
+  document.getElementById("examples").innerHTML = EXAMPLES.map(function (e, i) {
+    return "<button type='button' class='chip' onclick='document.getElementById(\"idea\").value=EXAMPLES[" + i + "]'>" + esc(e) + "</button>";
+  }).join("");
+  updateParams();
+  setMode(START_MODE);
+</script>
+
+</body>
+</html>
