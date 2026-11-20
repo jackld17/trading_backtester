@@ -426,9 +426,9 @@ class SimResult:
             lines.append(f"  {side} {t['entry_date']}  @ ${t['entry_price']:.2f}")
             if t["exit_date"]:
                 lines.append(f"  {'SELL' if t['side']=='long' else 'COVER'} {t['exit_date']}  @ ${t['exit_price']:.2f}"
-                             f"  return: {t['return']:+.1%}  ({t['exit_reason']}, {t['bars']}d)")
+                             f"  net: {t['return']:+.1%}  ({t['exit_reason']}, {t['bars']}d)")
             else:
-                lines.append(f"  (still open at end, mark {t['return']:+.1%})")
+                lines.append(f"  (still open at end, net mark {t['return']:+.1%})")
         return lines
 
 
@@ -457,12 +457,18 @@ def run_spec(df: pd.DataFrame, spec: dict, starting_cash: float = 10_000.0,
     entries = np.zeros(len(idx), dtype=bool)
     exits = np.zeros(len(idx), dtype=bool)
 
+    def _trade_returns(e_px, x_px):
+        """Gross price return, and net return after paying costs on both sides.
+        Net is P&L over entry notional, so with 100% sizing equity grows by exactly (1 + net)."""
+        gross = sign * (x_px - e_px) / e_px
+        return gross, gross - cost_rate * (1 + x_px / e_px)
+
     def close_trade(i, px, reason):
         nonlocal cash, shares, entry_px, entry_i, extreme
         cash += shares * px - abs(shares * px) * cost_rate
-        ret = sign * (px - entry_px) / entry_px
+        gross, net = _trade_returns(entry_px, px)
         trades[-1].update(exit_date=str(idx[i].date()), exit_price=float(px), exit_reason=reason,
-                          bars=int(i - entry_i), **{"return": float(ret)})
+                          bars=int(i - entry_i), gross_return=float(gross), **{"return": float(net)})
         shares, entry_px, entry_i, extreme = 0.0, None, None, None
         exits[i] = True
 
@@ -515,7 +521,8 @@ def run_spec(df: pd.DataFrame, spec: dict, starting_cash: float = 10_000.0,
             pending = "enter"   # also allows re-entry the bar after a stop-out
 
     if shares != 0 and trades:
-        trades[-1]["return"] = float(sign * (c[-1] - entry_px) / entry_px)
+        gross, net = _trade_returns(entry_px, c[-1])        # marked as if closed at the last close
+        trades[-1]["return"], trades[-1]["gross_return"] = float(net), float(gross)
         trades[-1]["bars"] = int(len(idx) - 1 - entry_i)
 
     out = df.copy()
@@ -675,12 +682,19 @@ def perturb(spec: dict, path: tuple, factor: float) -> dict:
     node = s
     for p in path[:-1]:
         node = node[p]
-    v = node[path[-1]]
-    if path[-1] == "mult":
+    key = path[-1]
+    v = node[key]
+    if key == "mult":
         new = 1 + (v - 1) * factor          # perturb the distance from 1, not the multiplier
+    elif key in ("window", "fast", "slow", "signal"):
+        new = max(2, int(round(v * factor)))         # lookbacks stay whole bars
+    elif key == "max_hold_days":
+        new = max(1, int(round(v * factor)))
     else:
+        # Thresholds and risk percentages: scale the value and keep its sign.
+        # (Rounding/clamping here used to turn "z < -2" into "z < 2".)
         new = v * factor
-    if isinstance(v, int) and not isinstance(v, bool):
-        new = max(2 if path[-1] != "max_hold_days" else 1, int(round(new)))
-    node[path[-1]] = new
+        if float(new).is_integer():
+            new = int(new)
+    node[key] = new
     return s

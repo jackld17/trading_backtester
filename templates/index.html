@@ -341,7 +341,7 @@
 </div>
 
 <div class="card">
-  <h2>Trade Log &nbsp;<span style="font-weight:400;">{{ metrics.n_trades }} executions · {{ metrics.n_wins }}/{{ metrics.n_round_trips }} winning trips</span></h2>
+  <h2>Trade Log &nbsp;<span style="font-weight:400;">{{ metrics.n_trades }} trades · {{ metrics.n_wins }}/{{ metrics.n_round_trips }} winning trips</span></h2>
   <div class="trade-log">{% for entry in trade_log %}<div class="trade-row">{{ entry }}</div>{% endfor %}</div>
 </div>
 {% endif %}

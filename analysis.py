@@ -180,6 +180,8 @@ def red_flags(spec, m, split_info, costs, sensitivity, n_bars) -> list[str]:
         sh = [v["sharpe"] for v in row["variants"]]
         if base_sh > 0.4 and (min(sh) < 0 or base_sh - min(sh) > 0.6):
             flags.append(f"Fragile to '{row['param']}': a ±25% change moves Sharpe from {base_sh:.2f} to {min(sh):.2f}.")
+    if m["total_return"] < 0:
+        flags.append(f"Loses money overall ({m['total_return']:+.1%}).")
     if m["total_return"] < m["bah_return"] and m["sharpe_ratio"] < m["bah_sharpe"]:
         flags.append("Lags buy-and-hold on both total return and Sharpe.")
     if m["max_drawdown"] < m["bah_max_drawdown"]:
@@ -274,6 +276,19 @@ def clean(obj):
 def checks(metrics: dict, diag: dict) -> list[dict]:
     """Boil the robustness tables down to pass / warn / fail tags for the scorecard."""
     out = []
+    base = metrics["sharpe_ratio"]
+
+    # First question a desk would ask: did it beat just holding the stock?
+    bh_sh = metrics["bah_sharpe"]
+    if metrics["total_return"] < 0:
+        out.append({"status": "fail", "label": "Loses money"})
+    elif base >= bh_sh:
+        out.append({"status": "pass", "label": "Beats buy & hold (Sharpe)"})
+    elif base >= 0.75 * bh_sh:
+        out.append({"status": "warn", "label": "Close to buy & hold"})
+    else:
+        out.append({"status": "fail", "label": "Trails buy & hold"})
+
     sp = diag["split"]
     yr = sp["split_date"][:4]
     is_s, oos_s = sp["in_sample"]["sharpe"], sp["out_of_sample"]["sharpe"]
@@ -289,7 +304,6 @@ def checks(metrics: dict, diag: dict) -> list[dict]:
     out.append({"status": "pass" if n >= 30 else "warn" if n >= 10 else "fail",
                 "label": f"Enough trades ({n})" if n >= 30 else f"Few trades ({n})" if n >= 10 else f"Too few trades ({n})"})
 
-    base = metrics["sharpe_ratio"]
     worst = max(diag["costs"], key=lambda c: c["bps"])
     if base > 0.1:
         r = worst["sharpe"] / base

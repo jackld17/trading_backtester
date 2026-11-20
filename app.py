@@ -3,7 +3,7 @@ app.py — Flask web app wrapping the backtest engine.
 
 Routes:
   GET  /           → render the page
-  POST /           → manual mode: parse form, run MA/RSI backtest, render results + chart
+  POST /           → manual mode: MA/RSI form → DSL spec → same engine as /analyze
   POST /interpret  → (legacy) map plain English to the MA/RSI form fields
   POST /analyze    → AI Analyst: plain-English idea (or a follow-up tweak) → spec → backtest
                      → robustness diagnostics → Claude's written review.  Returns JSON.
@@ -23,6 +23,45 @@ import analysis
 import ai_analyst
 
 app = Flask(__name__)
+
+DEFAULT_START = "2015-01-01"
+
+
+def _today() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _check_dates(start: str, end: str) -> None:
+    """Raise ValueError with a readable message unless start/end are valid YYYY-MM-DD, start < end."""
+    try:
+        s, e = datetime.strptime(start, "%Y-%m-%d"), datetime.strptime(end, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        raise ValueError(f"Dates must be YYYY-MM-DD (got '{start}' and '{end}').")
+    if s >= e:
+        raise ValueError("Start date must be before end date.")
+
+
+def manual_spec(form: dict) -> tuple[dict, str]:
+    """Turn the Manual form into a DSL spec, so it runs on the same engine as the AI Analyst.
+
+    MA Crossover: long while Close > SMA(n), flat when Close < SMA(n).
+    RSI:          buy when RSI < oversold, sell when RSI > overbought.
+    Both use the default 5 bps per side, matching AI mode.
+    """
+    if form["strategy"] == "MA Crossover":
+        w = form["ma_window"]
+        spec = {"name": f"MA{w} Crossover", "direction": "long",
+                "indicators": [{"id": "sma", "type": "sma", "window": w}],
+                "entry": {"left": "close", "op": ">", "right": "sma"},
+                "exit": {"left": "close", "op": "<", "right": "sma"}}
+    else:
+        w, lo, hi = form["rsi_window"], form["oversold"], form["overbought"]
+        spec = {"name": f"RSI({w}, oversold={lo}, overbought={hi})", "direction": "long",
+                "indicators": [{"id": "rsi", "type": "rsi", "window": w}],
+                "entry": {"left": "rsi", "op": "<", "right": lo},
+                "exit": {"left": "rsi", "op": ">", "right": hi}}
+    spec = dsl.validate_spec(spec)
+    return spec, f"{spec['name']} · {spec['costs_bps']:g} bps/side"
 
 # System prompt for the legacy /interpret route.
 INTERPRET_SYSTEM_PROMPT = """You are a financial strategy parser. Map the user's plain-English description to exactly one of two supported trading strategies and return a JSON object — nothing else. No markdown, no backticks, no explanation.
@@ -46,8 +85,8 @@ def index():
         "rsi_window" : 14,
         "oversold"   : 30,
         "overbought" : 70,
-        "start_date" : "2015-01-01",
-        "end_date"   : "2025-01-01",
+        "start_date" : DEFAULT_START,
+        "end_date"   : _today(),
     }
 
     if request.method == "GET":
@@ -68,30 +107,20 @@ def index():
         return render_template("index.html", form=form,
                                error="Strategy parameters must be whole numbers.")
 
-    # ── Run backtest ──────────────────────────────────────────────────────────
+    # ── Run backtest (same engine, costs and metrics as the AI Analyst) ───────
     try:
+        _check_dates(form["start_date"], form["end_date"])
+        spec, strategy_label = manual_spec(form)
         df = engine.load_data(form["ticker"], form["start_date"], form["end_date"])
+        if len(df) <= dsl.warmup_bars(spec) + 20:
+            raise ValueError(f"Only {len(df)} bars of data, but the indicator needs "
+                             f"~{dsl.warmup_bars(spec)} to warm up. Use a longer date range.")
+        res       = dsl.run_spec(df, spec)
+        metrics   = analysis.compute_metrics(res)
+        trade_log = res.trade_log
+        chart_b64 = analysis.build_chart(res, spec, form["ticker"], spec["name"])
 
-        if form["strategy"] == "MA Crossover":
-            df = engine.ma_crossover_signals(df, ma_window=form["ma_window"])
-            strategy_label = f"MA{form['ma_window']} Crossover"
-        else:
-            df = engine.rsi_signals(
-                df,
-                rsi_window=form["rsi_window"],
-                oversold=form["oversold"],
-                overbought=form["overbought"],
-            )
-            strategy_label = (
-                f"RSI({form['rsi_window']}, "
-                f"oversold={form['oversold']}, overbought={form['overbought']})"
-            )
-
-        trade_log, trade_returns, df = engine.run_simulation(df)
-        metrics   = engine.compute_metrics(df, trade_log, trade_returns)
-        chart_b64 = engine.build_chart(df, form["ticker"], strategy_label)
-
-    except ValueError as exc:
+    except ValueError as exc:            # includes dsl.SpecError (e.g. window out of range)
         return render_template("index.html", form=form, error=str(exc))
 
     return render_template(
@@ -140,7 +169,7 @@ def analyze():
     body = request.get_json(force=True) or {}
     text = (body.get("text") or "").strip()
     ticker = (body.get("ticker") or "SPY").strip().upper()
-    start, end = body.get("start_date") or "2015-01-01", body.get("end_date") or "2025-01-01"
+    start, end = body.get("start_date") or DEFAULT_START, body.get("end_date") or _today()
 
     try:
         # 1) idea -> spec
@@ -159,6 +188,7 @@ def analyze():
             end = interp.get("end_date") or end
 
         # 2) data + backtest + diagnostics
+        _check_dates(start, end)
         df = engine.load_data(ticker, start, end)
         if len(df) <= dsl.warmup_bars(spec) + 20:
             return jsonify({"status": "error", "spec": spec,
