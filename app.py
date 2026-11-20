@@ -4,7 +4,6 @@ app.py — Flask web app wrapping the backtest engine.
 Routes:
   GET  /           → render the page
   POST /           → manual mode: MA/RSI form → DSL spec → same engine as /analyze
-  POST /interpret  → (legacy) map plain English to the MA/RSI form fields
   POST /analyze    → AI Analyst: plain-English idea (or a follow-up tweak) → spec → backtest
                      → robustness diagnostics → Claude's written review.  Returns JSON.
 """
@@ -14,7 +13,6 @@ import os
 import re
 from datetime import datetime
 
-import anthropic
 from flask import Flask, render_template, request, jsonify, abort
 
 import engine
@@ -62,18 +60,6 @@ def manual_spec(form: dict) -> tuple[dict, str]:
                 "exit": {"left": "rsi", "op": ">", "right": hi}}
     spec = dsl.validate_spec(spec)
     return spec, f"{spec['name']} · {spec['costs_bps']:g} bps/side"
-
-# System prompt for the legacy /interpret route.
-INTERPRET_SYSTEM_PROMPT = """You are a financial strategy parser. Map the user's plain-English description to exactly one of two supported trading strategies and return a JSON object — nothing else. No markdown, no backticks, no explanation.
-
-Supported strategies:
-1. MA Crossover: {"strategy": "MA Crossover", "ma_window": <integer>}
-2. RSI: {"strategy": "RSI", "rsi_window": <integer>, "oversold": <integer>, "overbought": <integer>}
-
-If the input cannot be confidently mapped to one of these two strategies, return: {"error": "Could not interpret strategy"}
-
-Return raw JSON only."""
-
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -133,27 +119,6 @@ def index():
     )
 
 
-@app.route("/interpret", methods=["POST"])
-def interpret():
-    """Legacy: map plain-English text to the MA/RSI form fields."""
-    text = request.get_json(force=True).get("text", "").strip()
-    if not text:
-        return jsonify({"error": "No text provided"}), 400
-
-    try:
-        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-        message = client.messages.create(
-            model=ai_analyst.MODEL,
-            max_tokens=256,
-            system=INTERPRET_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": text}],
-        )
-        raw = message.content[0].text.strip()
-        return jsonify(json.loads(raw))
-    except json.JSONDecodeError:
-        return jsonify({"error": "Model returned a non-JSON response"}), 500
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/analyze", methods=["POST"])

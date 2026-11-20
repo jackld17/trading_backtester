@@ -89,7 +89,7 @@ The app reads the key from the environment. If you keep it in a `.env` file, loa
 python3 -m unittest discover -s tests -v
 ```
 
-There are 19 tests on synthetic seeded prices, so they need no network or API key. They cover:
+There are 22 tests on synthetic seeded prices, so they need no network or API key. They cover:
 
 - no lookahead: running on truncated data reproduces the full run bar for bar,
 - accounting: replaying every fill with costs reproduces final equity to the cent,
@@ -109,7 +109,6 @@ analysis.py       metrics, robustness diagnostics, scorecard, chart
 engine.py         price data (yfinance)
 templates/        web UI and printable report page
 tests/            unit tests
-backtest.py       the original standalone 50-day MA script, kept for reference
 ```
 
 ## Limitations

@@ -213,6 +213,42 @@ class ValidationTests(unittest.TestCase):
                     dsl.validate_spec(spec)
 
 
+class DataCacheTests(unittest.TestCase):
+    """engine.load_data: one download per ticker per day, sliced locally, end date exclusive."""
+
+    def setUp(self):
+        import engine
+        self.engine = engine
+        engine.clear_cache()
+        self.prices = make_prices(n=600)
+
+    def tearDown(self):
+        self.engine.clear_cache()
+
+    def test_downloads_once_then_slices(self):
+        with mock.patch.object(self.engine.yf, "download", return_value=self.prices) as dl:
+            a = self.engine.load_data("spy", "2015-03-02", "2016-01-04")
+            b = self.engine.load_data("SPY", "2015-06-01", "2016-06-01")
+        self.assertEqual(dl.call_count, 1)                      # second call served from cache
+        self.assertEqual(a.index[0], pd.Timestamp("2015-03-02"))
+        self.assertLess(a.index[-1], pd.Timestamp("2016-01-04"))  # end is exclusive, like yfinance
+        self.assertEqual(b.index[0], pd.Timestamp("2015-06-01"))
+
+    def test_refreshes_on_a_new_day(self):
+        with mock.patch.object(self.engine.yf, "download", return_value=self.prices) as dl:
+            self.engine.load_data("SPY", "2015-03-02", "2016-01-04")
+            stale = self.engine._CACHE["SPY"][1]
+            self.engine._CACHE["SPY"] = (self.engine.date(2000, 1, 1), stale)
+            self.engine.load_data("SPY", "2015-03-02", "2016-01-04")
+        self.assertEqual(dl.call_count, 2)
+
+    def test_bad_ticker_raises_and_is_not_cached(self):
+        with mock.patch.object(self.engine.yf, "download", return_value=pd.DataFrame()):
+            with self.assertRaises(ValueError):
+                self.engine.load_data("NOPE", "2015-01-01", "2020-01-01")
+        self.assertNotIn("NOPE", self.engine._CACHE)
+
+
 try:
     import flask  # noqa: F401
     HAVE_FLASK = True
