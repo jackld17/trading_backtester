@@ -64,7 +64,7 @@ The breakout gives up total return for a much smaller drawdown. The dip-buy bare
 
 ## Setup
 
-Requires Python 3.10+.
+Requires Python 3.11+. `requirements.txt` pins exact versions tested together.
 
 ```bash
 pip install -r requirements.txt
